@@ -1,0 +1,162 @@
+<!-- views/student-info.ejs -->
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>تقرير الطالب - <%= student.student_name %></title>
+    <!-- استدعاء ملف الـ CSS -->
+    <link rel="stylesheet" href="/css/style.css">
+    <!-- استدعاء مكتبة أيقونات Font Awesome -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <!-- استدعاء مكتبة الرسوم البيانية -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+</head>
+<body>
+
+    <header class="main-header">
+        <div class="container">
+            <h1>تقرير الطالب - مستر محمد جمعه</h1>
+            <div class="contact-info">
+                <span><i class="fas fa-phone"></i> 01098765432</span>
+                <span><i class="fas fa-map-marker-alt"></i> 13 شارع حلوان العام، القاهرة</span>
+            </div>
+        </div>
+    </header>
+
+    <main class="container">
+        <section class="student-card">
+            <h2>مرحباً، <span class="student-name"><%= student.student_name %></span></h2>
+            <p><strong>رقم الطالب:</strong> <%= student.student_id %></p>
+        </section>
+
+        <section class="report-section">
+            <h2>الدرجات والغياب</h2>
+            <div class="table-responsive">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>الحصة</th>
+                            <th>الدرجة</th>
+                            <th>الحضور</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <% data.sessions.forEach((session, index) => { %>
+                            <% if (session.grade !== null || session.attendance !== null) { %>
+                                <% 
+                                    let gradeClass = '';
+                                    // افترض أن الدرجة القصوى هي 10. يمكنك تعديل هذا الشرط.
+                                    // إذا كانت الدرجة أقل من 5، ستأخذ اللون الأحمر.
+                                    if (session.grade !== null && session.grade < 5) {
+                                        gradeClass = 'grade-low';
+                                    } else if (session.grade !== null) {
+                                        gradeClass = 'grade-high';
+                                    }
+                                %>
+                                <tr>
+                                    <td>حصة <%= index + 1 %></td>
+                                    <td class="<%= gradeClass %>"><%= session.grade ?? 'لم تُسجل بعد' %></td>
+                                    <td><%= session.attendance ?? 'لم يُسجل بعد' %></td>
+                                </tr>
+                            <% } %>
+                        <% }); %>
+                    </tbody>
+                </table>
+            </div>
+        </section>
+
+        <section class="report-section">
+            <h2>درجات الامتحانات</h2>
+            <div class="table-responsive">
+                <table>
+                     <thead>
+                        <tr>
+                            <th>الامتحان</th>
+                            <th>الدرجة</th>
+                        </tr>
+                    </thead>
+                     <tbody>
+                        <% Object.keys(data.exams).forEach(examName => { %>
+                            <tr>
+                                <td><%= examName %></td>
+                                <td><%= data.exams[examName] ?? 'لم تُسجل بعد' %></td>
+                            </tr>
+                        <% }); %>
+                    </tbody>
+                </table>
+            </div>
+        </section>
+
+        <section class="report-section">
+            <h2>مخطط بياني لمستوى الدرجات</h2>
+            <div class="chart-container">
+                <canvas id="gradesChart"></canvas>
+            </div>
+        </section>
+        
+        <div class="action-buttons">
+            <a href="#" class="btn btn-primary">استعلام عن طالب آخر</a>
+        </div>
+    </main>
+
+    <footer class="main-footer">
+        <div class="container">
+            <div class="social-links">
+                <a href="#" aria-label="YouTube"><i class="fab fa-youtube"></i></a>
+                <a href="#" aria-label="Facebook"><i class="fab fa-facebook-f"></i></a>
+                <a href="#" aria-label="WhatsApp"><i class="fab fa-whatsapp"></i></a>
+                <a href="#" aria-label="Instagram"><i class="fab fa-instagram"></i></a>
+            </div>
+            <p>© 2024 جميع الحقوق محفوظة - مستر محمد جمعه</p>
+        </div>
+    </footer>
+
+    <script>
+        const ctx = document.getElementById('gradesChart').getContext('2d');
+        const sessionsData = <%- JSON.stringify(data.sessions || []) %>;
+
+        const labels = sessionsData.map((s, i) => `حصة ${i + 1}`);
+        // فلترة الدرجات لتجاهل القيم الفارغة من المخطط
+        const grades = sessionsData.map(s => s.grade === null ? NaN : s.grade); 
+
+        const myChart = new Chart(ctx, {
+            type: 'line', 
+            data: {
+                labels: labels,
+                datasets: [{
+                    label: 'درجات الحصص',
+                    data: grades,
+                    backgroundColor: 'rgba(54, 162, 235, 0.2)',
+                    borderColor: 'rgba(54, 162, 235, 1)',
+                    borderWidth: 2,
+                    fill: true,
+                    tension: 0.4, // لجعل الخط أكثر نعومة
+                    pointBackgroundColor: 'rgba(54, 162, 235, 1)',
+                    pointRadius: 5,
+                    pointHoverRadius: 7
+                }]
+            },
+            options: {
+                scales: {
+                    y: {
+                        beginAtZero: true,
+                        ticks: { color: '#555' }
+                    },
+                    x: {
+                        ticks: { color: '#555' }
+                    }
+                },
+                responsive: true,
+                plugins: {
+                    legend: {
+                        labels: {
+                            color: '#333'
+                        }
+                    }
+                }
+            }
+        });
+    </script>
+</body>
+</html>
