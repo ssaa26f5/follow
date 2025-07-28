@@ -11,6 +11,7 @@ const path = require('path');
 // 2. إعداد Express App
 const app = express();
 const port = 8080 || process.env.PORT;
+app.set('views', path.join(__dirname, 'views'));
 
 app.set('view engine', 'ejs'); // تحديد EJS كمحرك قوالب
 app.use(express.urlencoded({ extended: true })); // لقراءة البيانات من الفورم
@@ -20,7 +21,8 @@ app.use(express.static(path.join(__dirname, 'public'))); // لخدمة المل�
 const upload = multer({ storage: multer.memoryStorage() });
 
 // 4. الاتصال بقاعدة البيانات (أو إنشائها إذا لم تكن موجودة)
-const db = new sqlite3.Database('./database.db', (err) => {
+const db = new sqlite3.Database(path.join(__dirname, 'database.db'), sqlite3.OPEN_READONLY, (err) => {
+
     if (err) {
         console.error("Error opening database " + err.message);
     } else {
@@ -170,4 +172,8 @@ app.get('/info/:code', (req, res) => {
 // 5. تشغيل الخادم
 app.listen(port, () => {
     console.log(`Server is running at http://localhost:${port}`);
+});
+
+app.get('/', (req, res) => {
+  res.redirect('/upload'); // أو res.render('upload');
 });
