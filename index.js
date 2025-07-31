@@ -1,4 +1,4 @@
-// server.js
+// index.js
 
 // 1. استدعاء المكتبات
 require('dotenv').config(); // لتحميل المتغيرات من ملف .env
@@ -11,6 +11,7 @@ const path = require('path');
 // 2. إعداد Express App
 const app = express();
 const port = 8080 || process.env.PORT;
+
 app.set('views', path.join(__dirname, 'views'));
 
 app.set('view engine', 'ejs'); // تحديد EJS كمحرك قوالب
@@ -21,8 +22,7 @@ app.use(express.static(path.join(__dirname, 'public'))); // لخدمة المل�
 const upload = multer({ storage: multer.memoryStorage() });
 
 // 4. الاتصال بقاعدة البيانات (أو إنشائها إذا لم تكن موجودة)
-const db = new sqlite3.Database(path.join(__dirname, 'database.db'), sqlite3.OPEN_READONLY, (err) => {
-
+const db = new sqlite3.Database('./database.db', (err) => {
     if (err) {
         console.error("Error opening database " + err.message);
     } else {
@@ -143,37 +143,202 @@ app.get('/info', (req, res) => {
     res.render('scan'); 
 });
 
-// server.js
+// دالة مساعدة لتجاهل الدرجات الصفرية في الحسابات
+const calculateAverage = (arr) => {
+    const validGrades = arr.filter(g => g !== null && g > 0);
+    if (validGrades.length === 0) return 0;
+    const sum = validGrades.reduce((a, b) => a + b, 0);
+    return (sum / validGrades.length);
+};
+
 app.get('/info/:code', (req, res) => {
     const uniqueCode = req.params.code;
-    
-    // سطر جديد للتحقق
-    console.log(`Searching for student with code: [${uniqueCode}]`);
 
-    db.get("SELECT * FROM students WHERE unique_code = ?", [uniqueCode], (err, row) => {
-        // ... باقي الكود كما هو
+    // 1. جلب بيانات كل الطلاب مرة واحدة لتحليلها
+    db.all("SELECT * FROM students", [], (err, allRows) => {
         if (err) {
-            return res.status(500).render('error', { message: 'حدث خطأ في الخادم.' });
+            console.error(err);
+            return res.status(500).render('error', { message: 'خطأ في جلب بيانات الطلاب.' });
         }
-        if (!row) {
-            // اطبع رسالة أوضح في الـ console
-            console.log(`Student with code [${uniqueCode}] NOT FOUND in database.`);
+
+        // 2. البحث عن الطالب الحالي
+        const currentRow = allRows.find(r => r.unique_code === uniqueCode);
+        if (!currentRow) {
             return res.status(404).render('error', { message: 'هذا الكود غير صحيح أو الطالب غير موجود.' });
         }
-        // ... باقي الكود
-        const studentData = JSON.parse(row.data);
+
+        const currentStudent = {
+            id: currentRow.student_id,
+            name: currentRow.student_name,
+            data: JSON.parse(currentRow.data)
+        };
+
+        // 3. تحليل بيانات كل الطلاب لحساب الإحصائيات
+        const allStudentsData = allRows.map(r => ({ ...JSON.parse(r.data), student_id: r.student_id }));
+        const stats = {
+            session: { average: 0, rank: 0, classAverage: 0, rankPercentage: 0 },
+            exams: {}
+        };
+
+        // --- حساب إحصائيات الحصص ---
+        const studentSessionGrades = currentStudent.data.sessions.map(s => s.grade);
+        stats.session.average = calculateAverage(studentSessionGrades);
+
+        const allSessionAverages = allStudentsData
+            .map(s => calculateAverage(s.sessions.map(ses => ses.grade)))
+            .filter(avg => avg > 0) // تجاهل الطلاب اللي متوسطهم صفر
+            .sort((a, b) => b - a); // ترتيب تنازلي
+
+        stats.session.rank = allSessionAverages.indexOf(stats.session.average) + 1;
+        stats.session.classAverage = calculateAverage(allSessionAverages);
+        if(allSessionAverages.length > 0) {
+            stats.session.rankPercentage = (stats.session.rank / allSessionAverages.length) * 100;
+        }
+
+
+        // --- حساب إحصائيات الامتحانات الكبرى ---
+        Object.keys(currentStudent.data.exams).forEach(examName => {
+            const studentExamGrade = currentStudent.data.exams[examName];
+
+            const allExamGrades = allStudentsData
+                .map(s => s.exams[examName])
+                .filter(g => g !== null && g > 0) // تجاهل الغياب
+                .sort((a, b) => b - a); // ترتيب تنازلي
+
+            const rank = allExamGrades.indexOf(studentExamGrade) + 1;
+            const classAverage = calculateAverage(allExamGrades);
+            const rankPercentage = (rank / allExamGrades.length) * 100;
+
+
+            stats.exams[examName] = {
+                grade: studentExamGrade,
+                rank: rank > 0 ? rank : 'N/A', // لا ترتيب لو الطالب غائب
+                classAverage: classAverage.toFixed(1),
+                totalStudents: allExamGrades.length,
+                rankPercentage: rank > 0 ? rankPercentage : 100
+            };
+        });
+
+        // 4. إرسال كل البيانات المعالجة إلى الواجهة
         res.render('student-info', {
-            student: { student_id: row.student_id, student_name: row.student_name },
-            data: studentData
+            student: { student_id: currentStudent.id, student_name: currentStudent.name },
+            data: currentStudent.data,
+            stats: stats // <-- هنا نرسل الإحصائيات الجديدة
         });
     });
 });
+// دالة مساعدة لحساب توزيع الطلاب
+const calculateLevelDistribution = (allAverages) => {
+    const distribution = { 'ممتاز (90%+)': 0, 'جيد جداً (80-90%)': 0, 'جيد (65-80%)': 0, 'مقبول (50-65%)': 0, 'يحتاج تحسين (<50%)': 0 };
+    const totalStudents = allAverages.length;
+    if (totalStudents === 0) return distribution;
 
+    allAverages.forEach(avg => {
+        // افترض أن الدرجة من 10 للحصص، ومن 100 للامتحانات الكبرى. سنوحدها كنسبة مئوية.
+        // هذا الجزء يحتاج لتعديل حسب الدرجة النهائية لكل امتحان. سنفترض أن متوسط الحصص من 10.
+        const percentage = (avg / 10) * 100; // مثال لدرجة الحصص
+        if (percentage >= 90) distribution['ممتاز (90%+)']++;
+        else if (percentage >= 80) distribution['جيد جداً (80-90%)']++;
+        else if (percentage >= 65) distribution['جيد (65-80%)']++;
+        else if (percentage >= 50) distribution['مقبول (50-65%)']++;
+        else distribution['يحتاج تحسين (<50%)']++;
+    });
+    return distribution;
+};
+
+
+app.get('/dashboard', (req, res) => {
+    // يمكنك إضافة حماية بكلمة سر هنا بنفس طريقة صفحة الرفع
+    db.all("SELECT * FROM students", [], (err, allRows) => {
+        if (err) {
+            console.error(err);
+            return res.status(500).render('error', { message: 'خطأ في جلب بيانات الطلاب.' });
+        }
+
+        const allStudentsData = allRows.map(r => JSON.parse(r.data));
+        const totalStudents = allStudentsData.length;
+
+        // 1. متوسط درجات كل امتحان كبير
+        const examAverages = {};
+        const examNames = allStudentsData.length > 0 ? Object.keys(allStudentsData[0].exams) : [];
+        examNames.forEach(examName => {
+            const grades = allStudentsData.map(s => s.exams[examName]).filter(g => g !== null && g > 0);
+            examAverages[examName] = calculateAverage(grades);
+        });
+        
+        // 2. نسبة الحضور الإجمالية
+        let totalSessionsCount = 0;
+        let totalAttendanceCount = 0;
+        allStudentsData.forEach(student => {
+            student.sessions.forEach(session => {
+                if (session.attendance) { // تأكد من وجود سجل للحضور
+                    totalSessionsCount++;
+                    if (session.attendance === 'حاضر') {
+                        totalAttendanceCount++;
+                    }
+                }
+            });
+        });
+        const overallAttendance = totalSessionsCount > 0 ? (totalAttendanceCount / totalSessionsCount) * 100 : 0;
+
+        // 3. توزيع الطلاب حسب المستوى (بناء على متوسط الحصص)
+        const allSessionAverages = allStudentsData
+            .map(s => calculateAverage(s.sessions.map(ses => ses.grade)))
+            .filter(avg => avg > 0);
+        const levelDistribution = calculateLevelDistribution(allSessionAverages);
+
+
+        res.render('dashboard', {
+            totalStudents: totalStudents,
+            examAverages: examAverages,
+            overallAttendance: overallAttendance.toFixed(1),
+            levelDistribution: levelDistribution,
+            allStudentsRawData: allRows // لإتاحة التصدير
+        });
+    });
+});
+const { Parser } = require('json2csv');
+
+
+
+app.get('/export/csv', (req, res) => {
+    db.all("SELECT student_id, student_name, data FROM students", [], (err, rows) => {
+        if (err) {
+            return res.status(500).send("Could not export data.");
+        }
+
+        const flatData = [];
+        rows.forEach(row => {
+            const parsedData = JSON.parse(row.data);
+            const baseInfo = {
+                'ID': row.student_id,
+                'Name': row.student_name,
+            };
+            
+            // إضافة درجات الحصص
+            parsedData.sessions.forEach((session, i) => {
+                baseInfo[`Session ${i+1} Grade`] = session.grade;
+                baseInfo[`Session ${i+1} Attendance`] = session.attendance;
+            });
+
+            // إضافة درجات الامتحانات
+            Object.keys(parsedData.exams).forEach(examName => {
+                baseInfo[examName] = parsedData.exams[examName];
+            });
+            
+            flatData.push(baseInfo);
+        });
+
+        const json2csvParser = new Parser();
+        const csv = json2csvParser.parse(flatData);
+
+        res.header('Content-Type', 'text/csv');
+        res.attachment('student_grades_export.csv');
+        res.send(csv);
+    });
+});
 // 5. تشغيل الخادم
 app.listen(port, () => {
     console.log(`Server is running at http://localhost:${port}`);
 });
 
-app.get('/', (req, res) => {
-  res.redirect('/upload'); // أو res.render('upload');
-});
