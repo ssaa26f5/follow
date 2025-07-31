@@ -27,14 +27,7 @@ const db = new sqlite3.Database('./database.db', sqlite3.OPEN_READONLY, (err) =>
         console.error("Error opening database " + err.message);
     } else {
         console.log("Database connected!");
-        // إنشاء الجدول عند بدء تشغيل الخادم إذا لم يكن موجودًا
-        db.run(`
-            CREATE TABLE IF NOT EXISTS students (
-                student_id TEXT,
-                student_name TEXT,
-                unique_code TEXT PRIMARY KEY,
-                data TEXT
-            )
+        
         `);
     }
 });
